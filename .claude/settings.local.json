@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude update *)",
+      "Bash(mkdir \"C:\\\\Users\\\\PC\\\\Desktop\\\\RL omok\\\\env\")",
+      "Bash(mkdir \"C:\\\\Users\\\\PC\\\\Desktop\\\\RL omok\\\\agents\")",
+      "Bash(python tests/test_env.py)",
+      "Bash(python -c ' *)",
+      "Bash(python -X utf8 tests/test_env.py)",
+      "Bash(python -X utf8 scripts/train_phase1.py)"
+    ]
+  }
+}
