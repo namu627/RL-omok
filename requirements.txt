@@ -1,0 +1,14 @@
+# RL omok 의존성
+# pip install -r requirements.txt
+
+# 핵심 수치 연산
+numpy>=1.24
+
+# 딥러닝 프레임워크 (Phase 3~)
+# CPU-only 설치:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# CUDA 설치 시 https://pytorch.org/get-started 참조
+torch>=2.0
+
+# 시각화
+matplotlib>=3.7
