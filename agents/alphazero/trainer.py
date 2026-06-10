@@ -7,6 +7,7 @@ AlphaZero 학습 루프.
 
 import os
 import random
+import time
 import numpy as np
 import torch
 import torch.optim as optim
@@ -98,6 +99,7 @@ class AlphaZeroTrainer:
     ckpt_dir      : 체크포인트 저장 디렉터리
     device        : 'cpu' 또는 'cuda'
     temperature_cutoff : 이 수 이전 착수는 τ=1, 이후는 τ→0 (greedy)
+    ckpt_interval : 몇 반복마다 번호 포함 체크포인트 저장 (0이면 비활성)
     """
 
     def __init__(
@@ -119,6 +121,7 @@ class AlphaZeroTrainer:
         ckpt_dir: str = "checkpoints",
         device: str = "cpu",
         temperature_cutoff: int = 12,
+        ckpt_interval: int = 20,
     ):
         self.board_size = board_size
         self.n_in_row = n_in_row
@@ -133,6 +136,7 @@ class AlphaZeroTrainer:
         self.ckpt_dir = ckpt_dir
         self.device = device
         self.temp_cutoff = temperature_cutoff
+        self.ckpt_interval = ckpt_interval
 
         self.env = GomokuEnv(board_size=board_size, n_in_row=n_in_row)
         self.net = AlphaZeroNet(
@@ -152,8 +156,11 @@ class AlphaZeroTrainer:
     def train(self) -> list[float]:
         """n_iter 반복 학습 후 win_rates 반환."""
         os.makedirs(self.ckpt_dir, exist_ok=True)
+        t_start = time.time()
 
         for iteration in range(1, self.n_iter + 1):
+            t_iter = time.time()
+
             # self-play 데이터 수집
             new_data = self._collect_self_play()
             self.buffer.push(new_data)
@@ -167,17 +174,31 @@ class AlphaZeroTrainer:
             if iteration % self.eval_interval == 0:
                 win_rate = self._evaluate_vs_random()
                 self.win_rates.append(win_rate)
+                elapsed = time.time() - t_start
+                iter_time = time.time() - t_iter
                 print(
                     f"  iter {iteration:4d}/{self.n_iter}"
                     f"  buf={len(self.buffer):6d}"
                     f"  win={win_rate:.3f}"
+                    f"  iter_t={iter_time:.1f}s"
+                    f"  total={elapsed/60:.1f}m"
+                )
+            else:
+                elapsed = time.time() - t_start
+                iter_time = time.time() - t_iter
+                print(
+                    f"  iter {iteration:4d}/{self.n_iter}"
+                    f"  buf={len(self.buffer):6d}"
+                    f"  iter_t={iter_time:.1f}s"
+                    f"  total={elapsed/60:.1f}m",
+                    flush=True,
                 )
 
-            # 체크포인트 (50 반복마다)
-            if iteration % 50 == 0:
+            # 번호 포함 체크포인트
+            if self.ckpt_interval > 0 and iteration % self.ckpt_interval == 0:
                 path = os.path.join(
                     self.ckpt_dir,
-                    f"az_{self.board_size}x{self.board_size}_iter{iteration}.pt",
+                    f"az_{self.board_size}x{self.board_size}_iter{iteration:04d}.pt",
                 )
                 self.save(path)
 

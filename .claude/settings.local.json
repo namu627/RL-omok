@@ -10,7 +10,12 @@
       "Bash(python -X utf8 scripts/train_phase1.py)",
       "Bash(python -X utf8 scripts/train_phase2.py)",
       "Bash(python -X utf8 -c ' *)",
-      "Bash(python -c \"import torch; print\\('PyTorch:', torch.__version__, '| CUDA:', torch.cuda.is_available\\(\\)\\)\")"
+      "Bash(python -c \"import torch; print\\('PyTorch:', torch.__version__, '| CUDA:', torch.cuda.is_available\\(\\)\\)\")",
+      "Bash(python -X utf8 scripts/smoke_test_phase3.py)",
+      "Bash(python -X utf8 scripts/train_phase3_full.py)",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\" /FO LIST)",
+      "PowerShell(Get-Process *)",
+      "Bash(python -X utf8 scripts/train_9x9_verify.py)"
     ]
   }
 }

@@ -251,7 +251,7 @@ class MCTS:
         for action, child in root.children.items():
             counts[action] = child.N
 
-        if temperature < 1e-4:
+        if temperature < 1e-3:
             # greedy: 가장 방문 많은 칸에만 확률 1
             best = int(counts.argmax())
             probs = np.zeros(n, dtype=np.float32)
