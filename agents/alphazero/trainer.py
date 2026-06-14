@@ -16,7 +16,7 @@ from collections import deque
 
 from env.gomoku import GomokuEnv
 from agents.alphazero.network import AlphaZeroNet, board_to_tensor
-from agents.alphazero.mcts import MCTS
+from agents.alphazero.mcts import MCTS, MCTSNode
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -290,12 +290,34 @@ class AlphaZeroTrainer:
         while not all(done_mask):
             active_idx = [i for i, d in enumerate(done_mask) if not d]
 
-            # 루트 빌드 — legal_actions가 env.current_player를 참조하므로
-            # _build_root 호출 전에 해당 게임의 플레이어로 동기화
-            roots: dict[int, object] = {}
-            for i in active_idx:
+            # 루트 배치 빌드 — 활성 게임의 루트 사전 확률을 predict_batch로 한 번에 계산
+            root_boards   = [boards[i]  for i in active_idx]
+            root_players  = [players[i] for i in active_idx]
+            root_policies, _ = self.net.predict_batch(
+                root_boards, root_players, device=self.device
+            )
+            roots: dict[int, MCTSNode] = {}
+            for j, i in enumerate(active_idx):
+                # legal_actions가 env.current_player를 참조하므로 동기화
                 self.env.current_player = players[i]
-                roots[i] = mcts._build_root(boards[i], players[i])
+                legal = self.env.legal_actions(boards[i])
+
+                root = MCTSNode(
+                    parent=None, action=None,
+                    board=boards[i].copy(),
+                    current_player=players[i],
+                )
+                policy = root_policies[j].copy()
+                mask = np.zeros_like(policy)
+                mask[legal] = 1.0
+                policy *= mask
+                s = policy.sum()
+                if s > 0:
+                    policy /= s
+                else:
+                    policy[legal] = 1.0 / len(legal)
+                mcts._expand(root, policy, legal)
+                roots[i] = root
 
             # n_sim 시뮬레이션 (게임 간 배치 평가)
             for _ in range(self.n_sim):
