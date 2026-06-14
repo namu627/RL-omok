@@ -4,10 +4,12 @@ tests/test_mcts_parallel.py
 
 핵심 보장:
   (1) test_mcts_inter_game_independence  — 병렬 게임 A의 MCTS N분포 == 직렬 게임 A
-  (2) test_inter_game_no_cross_contamination — B 시뮬레이션이 A 트리를 변경하지 않음
-  (3) test_sample_shapes_and_z_values   — 에피소드 샘플 크기·정책합·z 유효성
-  (4) test_winner_reward_consistency    — 승패 z 부호 일관성
-  (5) test_episode_count               — 데이터 볼륨 검증
+      + lazy expansion 경로 실제 사용 검증 (root.children < n_legal)
+  (2) test_lazy_equals_eager_expansion   — lazy N분포 == eager(_expand 선생성) N분포
+      → "자식을 언제 만드느냐"만 다르고 PUCT 결정은 동일함을 직접 증명
+  (3) test_inter_game_no_cross_contamination — B 시뮬레이션이 A 트리를 변경하지 않음
+  (4) test_parallel_root_N_equals_n_sim  — 병렬 실행 후 각 루트 N = n_sim
+  (5~8) TestParallelCollectIntegrity     — trainer._collect_self_play 무결성
 
 실행: python -m pytest tests/test_mcts_parallel.py -v
 """
@@ -21,13 +23,13 @@ import pytest
 import torch
 
 from agents.alphazero.network import AlphaZeroNet
-from agents.alphazero.mcts import MCTS
+from agents.alphazero.mcts import MCTS, MCTSNode
 from agents.alphazero.trainer import AlphaZeroTrainer
 from env.gomoku import GomokuEnv, BLACK, WHITE
 
 
 # ──────────────────────────────────────────────────────────────────────
-# [1] MCTS 트리 독립성
+# [1] MCTS 트리 독립성 + Lazy Expansion 정확성
 # ──────────────────────────────────────────────────────────────────────
 
 class TestInterGameIndependence:
@@ -36,9 +38,9 @@ class TestInterGameIndependence:
         """게임 A를 게임 B와 병렬(lockstep)로 돌린 N분포가
            게임 A를 단독 직렬로 돌린 결과와 완전히 동일.
 
-        이것이 (b) 인터 게임 배치가 직렬과 수학적으로 동일하다는 증거:
-          - predict_batch == 각각 predict (Step 0에서 증명)
-          - 게임 A의 트리는 게임 B와 독립 → 직렬과 같은 N 분포 보장
+        Lazy expansion 경로 사용 검증도 포함:
+          - _build_root 후 root.children == 0 (자식 선생성 없음)
+          - N_SIM 시뮬 후 root.children < n_legal (lazy: 방문분만 생성)
         """
         torch.manual_seed(42)
         net  = AlphaZeroNet(board_size=6, n_res_blocks=2, n_filters=32)
@@ -53,13 +55,28 @@ class TestInterGameIndependence:
         # ── 직렬: 게임 A 단독 ──────────────────────────────────────
         env.current_player = WHITE
         root_serial = mcts._build_root(board.copy(), WHITE)
+
+        # lazy expansion 검증 #1: _build_root 직후 자식이 없어야 함
+        assert root_serial._policy is not None, "_build_root: _policy 설정 안 됨"
+        assert len(root_serial.children) == 0, (
+            f"_build_root 후 자식 {len(root_serial.children)}개 — eager expand 호출된 것으로 보임"
+        )
+
         for _ in range(N_SIM):
             mcts._simulate(root_serial)
         N_serial = {a: c.N for a, c in root_serial.children.items()}
 
-        # root.N = N_SIM 검증 (backup이 매번 루트를 거쳐야 함)
+        # root.N = N_SIM 검증
         assert root_serial.N == N_SIM, (
             f"직렬 루트 방문 횟수 오류: {root_serial.N} ≠ {N_SIM}"
+        )
+
+        # lazy expansion 검증 #2: N_SIM 후 자식 수 < n_legal
+        # (eager였다면 legal 전부 = 35개 선생성; lazy면 최대 N_SIM = 25개)
+        n_legal = len(root_serial._legal_actions)  # WHITE: 금수 없음 → 35
+        assert len(root_serial.children) <= N_SIM < n_legal, (
+            f"lazy 경로 검증 실패: root.children={len(root_serial.children)}, "
+            f"N_SIM={N_SIM}, n_legal={n_legal}"
         )
 
         # ── 병렬: 게임 A와 게임 B 동시 (lockstep) ─────────────────
@@ -67,6 +84,9 @@ class TestInterGameIndependence:
         root_A = mcts._build_root(board.copy(), WHITE)
         env.current_player = WHITE
         root_B = mcts._build_root(board.copy(), WHITE)   # 동일 초기 상태
+
+        assert len(root_A.children) == 0 and len(root_B.children) == 0, \
+            "병렬 루트도 _build_root 직후 자식이 없어야 함"
 
         for _ in range(N_SIM):
             to_eval = []
@@ -89,6 +109,11 @@ class TestInterGameIndependence:
         N_A = {a: c.N for a, c in root_A.children.items()}
         N_B = {a: c.N for a, c in root_B.children.items()}
 
+        # 병렬 루트도 lazy 경로 확인
+        assert len(root_A.children) <= N_SIM < n_legal and \
+               len(root_B.children) <= N_SIM < n_legal, \
+            "병렬 루트가 lazy 경로를 사용하지 않음"
+
         # 독립성 검증: 병렬 게임 A == 직렬
         assert N_A == N_serial, (
             "병렬 게임 A의 N분포가 직렬과 다름\n"
@@ -98,6 +123,86 @@ class TestInterGameIndependence:
         # 같은 초기 상태 → B도 동일
         assert N_B == N_serial, (
             "같은 초기 상태로 시작한 병렬 게임 B의 N분포가 직렬과 다름"
+        )
+
+    def test_lazy_equals_eager_expansion(self):
+        """Lazy expansion과 Eager expansion(_expand 선생성)이 동일한 N 분포를 생성한다.
+
+        이것이 lazy expansion 정확성의 핵심 증거:
+          - Lazy:  PUCT가 선택할 때만 _create_child (step_board 1회)
+          - Eager: legal 자식 전부 _expand로 선생성 후 동일 PUCT 적용
+          - PUCT 점수 공식이 수학적으로 동일:
+              방문 자식: -Q + c_puct * P * sqrt(N_parent) / (1 + N_child)
+              미방문(lazy)/선생성N=0(eager): c_puct * P * sqrt(N_parent)  ← 동일!
+          따라서 같은 시드·보드에서 두 방식의 N 분포는 정수 단위로 같아야 한다.
+        """
+        torch.manual_seed(42)
+        net  = AlphaZeroNet(board_size=6, n_res_blocks=2, n_filters=32)
+        env  = GomokuEnv(board_size=6, n_in_row=4)
+        N_SIM = 25
+        mcts = MCTS(net, env, n_simulations=N_SIM, device="cpu")
+
+        board = np.zeros((6, 6), dtype=np.int8)
+        board[2, 2] = BLACK
+        n_legal = 35  # WHITE 차례: 6×6 - 1 = 35개 빈 칸 = legal 수
+
+        # ── Lazy 방식 (현재 기본) ─────────────────────────────────
+        env.current_player = WHITE
+        root_lazy = mcts._build_root(board.copy(), WHITE)
+
+        # lazy 검증: 자식 선생성 없음
+        assert root_lazy._policy is not None
+        assert len(root_lazy.children) == 0, "lazy root: 자식이 미리 생성되면 안 됨"
+        assert len(root_lazy._legal_actions) == n_legal
+
+        for _ in range(N_SIM):
+            mcts._simulate(root_lazy)
+
+        assert root_lazy.N == N_SIM
+        # lazy: 방문한 자식만 children에 있음 (최대 N_SIM개, n_legal보다 적음)
+        assert len(root_lazy.children) <= N_SIM < n_legal, (
+            f"lazy 루트 자식 수 오류: {len(root_lazy.children)}"
+        )
+        N_lazy = {a: c.N for a, c in root_lazy.children.items()}
+
+        # ── Eager 방식 (기존 방식 재현: _expand로 자식 선생성) ────
+        env.current_player = WHITE
+        root_eager = mcts._build_root(board.copy(), WHITE)
+        # _build_root 후 _expand로 모든 legal 자식을 미리 생성
+        mcts._expand(root_eager, root_eager._policy.copy(), root_eager._legal_actions)
+
+        # eager 검증: 모든 legal 자식 선생성됨
+        assert len(root_eager.children) == n_legal, (
+            f"eager root: 자식 수 {len(root_eager.children)} ≠ n_legal {n_legal}"
+        )
+        # 선생성된 자식은 아직 평가 안 됨 (N=0, _policy=None)
+        assert all(c.N == 0 for c in root_eager.children.values()), \
+            "eager 선생성 자식은 초기 N=0이어야 함"
+        assert all(c._policy is None for c in root_eager.children.values()), \
+            "eager 선생성 자식은 아직 평가 전(_policy=None)이어야 함"
+
+        for _ in range(N_SIM):
+            mcts._simulate(root_eager)
+
+        assert root_eager.N == N_SIM
+        N_eager_all      = {a: c.N for a, c in root_eager.children.items()}
+        N_eager_visited  = {a: n for a, n in N_eager_all.items() if n > 0}
+
+        # N 분포 정수 단위 비교
+        # lazy:  방문한 자식만 dict에 존재  → {action: N}
+        # eager: 전체 자식 중 N>0인 것만   → {action: N}
+        # 같은 PUCT → 같은 방문 순서 → 같은 N
+        assert N_lazy == N_eager_visited, (
+            "Lazy와 Eager expansion의 N분포가 다름 — PUCT 동등성 깨짐\n"
+            f"lazy   상위 5: {sorted(N_lazy.items(),         key=lambda x: -x[1])[:5]}\n"
+            f"eager  상위 5: {sorted(N_eager_visited.items(), key=lambda x: -x[1])[:5]}\n"
+            f"lazy   총 방문: {sum(N_lazy.values())}\n"
+            f"eager  총 방문: {sum(N_eager_visited.values())}"
+        )
+
+        # 추가: 방문 자식 수도 동일
+        assert len(N_lazy) == len(N_eager_visited), (
+            f"방문 자식 수 불일치: lazy={len(N_lazy)}, eager={len(N_eager_visited)}"
         )
 
     def test_inter_game_no_cross_contamination(self):
@@ -117,8 +222,9 @@ class TestInterGameIndependence:
         env.current_player = WHITE
         rootB = mcts._build_root(boardB.copy(), WHITE)
 
-        # rootA 자식들의 초기 N=0 스냅샷
-        N_A_before = {a: c.N for a, c in rootA.children.items()}
+        # rootA 자식들의 초기 스냅샷 (lazy: 아직 자식 없음)
+        assert len(rootA.children) == 0, "lazy build 직후 rootA 자식 없어야 함"
+        N_A_before = {a: c.N for a, c in rootA.children.items()}  # 빈 dict
 
         # 게임 B만 10번 시뮬레이션 (게임 A는 건드리지 않음)
         for _ in range(10):
@@ -150,6 +256,10 @@ class TestInterGameIndependence:
         board = np.zeros((6, 6), dtype=np.int8)
         env.current_player = BLACK
         roots = [mcts._build_root(board.copy(), BLACK) for _ in range(3)]
+
+        # lazy 검증: 모든 루트 자식 없음
+        for idx, root in enumerate(roots):
+            assert len(root.children) == 0, f"루트 {idx}: lazy build 후 자식 없어야 함"
 
         for _ in range(N_SIM):
             to_eval = []

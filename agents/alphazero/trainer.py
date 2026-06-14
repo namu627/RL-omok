@@ -316,7 +316,8 @@ class AlphaZeroTrainer:
                     policy /= s
                 else:
                     policy[legal] = 1.0 / len(legal)
-                mcts._expand(root, policy, legal)
+                root._policy = policy
+                root._legal_actions = legal
                 roots[i] = root
 
             # n_sim 시뮬레이션 (게임 간 배치 평가)
