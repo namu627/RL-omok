@@ -6,13 +6,13 @@ AlphaZero 학습 루프.
 """
 
 import os
+import re
 import random
 import time
 import numpy as np
 import torch
 import torch.optim as optim
 from collections import deque
-from copy import deepcopy
 
 from env.gomoku import GomokuEnv
 from agents.alphazero.network import AlphaZeroNet, board_to_tensor
@@ -86,6 +86,7 @@ class AlphaZeroTrainer:
     Parameters
     ----------
     board_size, n_in_row : 환경 설정
+    renju         : True 이면 15×15 렌주 규칙 적용 (board_size=15 필수)
     n_res_blocks, n_filters : 네트워크 구조
     n_simulations : MCTS 시뮬레이션 횟수 (self-play)
     c_puct        : PUCT 계수
@@ -106,6 +107,7 @@ class AlphaZeroTrainer:
         self,
         board_size: int = 6,
         n_in_row: int = 4,
+        renju: bool = False,
         n_res_blocks: int = 3,
         n_filters: int = 64,
         n_simulations: int = 200,
@@ -125,6 +127,7 @@ class AlphaZeroTrainer:
     ):
         self.board_size = board_size
         self.n_in_row = n_in_row
+        self.renju = renju
         self.n_sim = n_simulations
         self.c_puct = c_puct
         self.n_iter = n_iterations
@@ -138,7 +141,7 @@ class AlphaZeroTrainer:
         self.temp_cutoff = temperature_cutoff
         self.ckpt_interval = ckpt_interval
 
-        self.env = GomokuEnv(board_size=board_size, n_in_row=n_in_row)
+        self.env = GomokuEnv(board_size=board_size, n_in_row=n_in_row, renju=renju)
         self.net = AlphaZeroNet(
             board_size=board_size,
             n_res_blocks=n_res_blocks,
@@ -153,12 +156,24 @@ class AlphaZeroTrainer:
 
     # ── 공개 API ──────────────────────────────────────────────────────
 
-    def train(self) -> list[float]:
-        """n_iter 반복 학습 후 win_rates 반환."""
+    def train(self, resume: bool = False) -> list[float]:
+        """n_iter 반복 학습 후 win_rates 반환. resume=True 이면 최신 체크포인트에서 재개."""
         os.makedirs(self.ckpt_dir, exist_ok=True)
+
+        start_iter = 0
+        if resume:
+            latest = self._find_latest_checkpoint()
+            if latest:
+                self.load(latest)
+                m = re.search(r"iter(\d+)", os.path.basename(latest))
+                start_iter = int(m.group(1)) if m else 0
+                print(f"  재개: {os.path.basename(latest)} (iter {start_iter} → {self.n_iter})")
+            else:
+                print("  재개 체크포인트 없음 — 처음부터 시작")
+
         t_start = time.time()
 
-        for iteration in range(1, self.n_iter + 1):
+        for iteration in range(start_iter + 1, self.n_iter + 1):
             t_iter = time.time()
 
             # self-play 데이터 수집
@@ -230,6 +245,20 @@ class AlphaZeroTrainer:
         self.net.load_state_dict(ckpt["net_state"])
         self.optimizer.load_state_dict(ckpt["optimizer_state"])
         self.win_rates = ckpt.get("win_rates", [])
+
+    def _find_latest_checkpoint(self) -> str | None:
+        """ckpt_dir에서 가장 최근 번호 체크포인트 경로 반환. 없으면 None."""
+        if not os.path.exists(self.ckpt_dir):
+            return None
+        bs = self.board_size
+        pattern = re.compile(rf"az_{bs}x{bs}_iter(\d+)\.pt")
+        best_iter, best_path = -1, None
+        for fname in os.listdir(self.ckpt_dir):
+            m = pattern.match(fname)
+            if m and int(m.group(1)) > best_iter:
+                best_iter = int(m.group(1))
+                best_path = os.path.join(self.ckpt_dir, fname)
+        return best_path
 
     # ── 내부 메서드 ───────────────────────────────────────────────────
 

@@ -15,7 +15,21 @@
       "Bash(python -X utf8 scripts/train_phase3_full.py)",
       "Bash(tasklist /FI \"IMAGENAME eq python.exe\" /FO LIST)",
       "PowerShell(Get-Process *)",
-      "Bash(python -X utf8 scripts/train_9x9_verify.py)"
+      "Bash(python -X utf8 scripts/train_9x9_verify.py)",
+      "Bash(python -m pytest env/test_renju_rules.py --collect-only)",
+      "Bash(python -c \"from env.renju_rules import classify_move, is_forbidden_overline, is_forbidden_44, is_forbidden_33_nonrecursive, is_forbidden_33_recursive, EMPTY, BLACK, WHITE; print\\('import OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -m pytest env/test_renju_rules.py -x -q)",
+      "Bash(python -m pytest env/test_renju_rules.py --collect-only -q)",
+      "Bash(python -m pytest env/test_renju_rules.py::TestOverline -v)",
+      "Bash(python -m pytest env/test_renju_rules.py::TestDoubleFour env/test_renju_rules.py::TestLegalMoves -v)",
+      "Bash(python -m pytest env/test_renju_rules.py::TestOverline env/test_renju_rules.py::TestDoubleFour env/test_renju_rules.py::TestLegalMoves env/test_renju_rules.py::TestDoubleThreeNonRecursive -v)",
+      "Bash(python -m pytest env/test_renju_rules.py -v)",
+      "Bash(python -m pytest env/test_renju_env.py -v)",
+      "Bash(python -m pytest env/test_renju_rules.py -q)",
+      "Bash(python -X utf8 scripts/train_renju_verify.py)",
+      "Bash(timeout 30)",
+      "Bash(type \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-PC-Desktop-RL-omok\\\\3931a79c-52ca-4721-bebf-e116638ac879\\\\tasks\\\\b4e4r8exu.output\")"
     ]
   }
 }

@@ -9,11 +9,18 @@ PUCT 기반 Monte Carlo Tree Search (AlphaZero 스타일).
 4. 백업: 매 레벨마다 value = -value  (상대 시점으로 전환)
 5. 종료 노드의 리프 값: parent.current_player가 이겼으면 자식 시점 = -1,
                          무승부 = 0, parent가 지면(상대가 이기면) = +1
+
+렌주 금수 처리 (방안 B):
+  - 루트 노드: env.legal_actions()로 금수 제외 — 실제 착수는 항상 합법
+  - 트리 내부 노드: _raw_legal_actions()로 빈 칸 전체 허용 (금수 필터 없음)
+    → 흑이 트리 내부에서 금수 자리를 두면 env.step()이 reward=-1 반환
+    → _expand가 해당 자식을 winner=-BLACK 종료 노드로 생성
+    → 역전파로 Q값이 -1 방향으로 수렴하여 MCTS가 자연히 금수를 회피
+  - legal_actions()는 루트에서 1회만 호출 (방안 A: 중복 호출 제거)
 """
 
 import math
 import numpy as np
-from copy import deepcopy
 
 from env.gomoku import GomokuEnv
 from agents.alphazero.network import AlphaZeroNet, board_to_tensor
@@ -137,7 +144,7 @@ class MCTS:
         else:
             policy[legal] = 1.0 / len(legal)
 
-        self._expand(root, policy)
+        self._expand(root, policy, legal)   # legal 재전달 (재계산 없음)
         return root
 
     def _simulate(self, root: MCTSNode) -> None:
@@ -164,17 +171,19 @@ class MCTS:
             policy, value = self.net.predict(
                 node.board, node.current_player, device=self.device
             )
-            legal = self.env.legal_actions(node.board)
+            # 트리 내부: 금수 필터 없이 빈 칸 전체를 후보로 삼는다 (방안 B).
+            # 금수 착수 시 _apply_action → env.step()이 reward=-1 반환 → 역전파로 회피 학습.
+            raw_legal = self._raw_legal_actions(node.board)
             mask = np.zeros_like(policy)
-            mask[legal] = 1.0
+            mask[raw_legal] = 1.0
             policy = policy * mask
             s = policy.sum()
             if s > 0:
                 policy /= s
             else:
-                policy[legal] = 1.0 / len(legal)
+                policy[raw_legal] = 1.0 / len(raw_legal)
 
-            self._expand(node, policy)
+            self._expand(node, policy, raw_legal)   # legal 전달 (방안 A: 재계산 없음)
             leaf_value = float(value)   # 이 노드의 current_player 시점
 
         # ── 역전파 ────────────────────────────────────────────────────
@@ -192,22 +201,26 @@ class MCTS:
                 best_child = child
         return best_child
 
-    def _expand(self, node: MCTSNode, policy: np.ndarray) -> None:
+    def _raw_legal_actions(self, board: np.ndarray) -> list[int]:
+        """빈 칸 전체 인덱스 반환 (렌주 금수 필터 없음). 트리 내부 노드 전용."""
+        n = self.env.board_size
+        return [int(r) * n + int(c) for r, c in np.argwhere(board == 0)]
+
+    def _expand(self, node: MCTSNode, policy: np.ndarray, legal: list[int]) -> None:
         """합법 착수마다 자식 노드 생성. 종료 상태 감지도 수행."""
-        legal = self.env.legal_actions(node.board)
         for action in legal:
-            # 환경 스텝 시뮬레이션 (deepcopy 대신 직접 계산)
             new_board, reward, done, info = self._apply_action(
-                node.board.copy(), action, node.current_player
+                node.board, action, node.current_player
             )
             # 자식의 current_player 는 항상 반전
             child_player = -node.current_player
 
             winner = 0
             if done:
-                if reward == 1:
-                    winner = node.current_player   # 착수한 쪽이 이김
-                # reward == 0: 무승부 (winner = 0)
+                if reward > 0:
+                    winner = node.current_player    # 착수한 쪽이 이김
+                elif reward < 0:
+                    winner = -node.current_player   # 착수한 쪽이 짐 (금수 등)
 
             child = MCTSNode(
                 parent=node,
@@ -223,13 +236,8 @@ class MCTS:
     def _apply_action(
         self, board: np.ndarray, action: int, player: int
     ) -> tuple:
-        """GomokuEnv.step 를 직접 호출하지 않고 보드를 업데이트."""
-        env = deepcopy(self.env)
-        env.board = board
-        env.current_player = player
-        env.done = False
-        state, reward, done, info = env.step(action)
-        return env.board.copy(), reward, done, info
+        """보드 배열만 복사해 착수 결과 계산 — deepcopy(env) 제거."""
+        return self.env.step_board(board, action, player)
 
     def _backup(self, path: list[MCTSNode], leaf_value: float) -> None:
         """
