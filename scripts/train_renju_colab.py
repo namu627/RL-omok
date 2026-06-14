@@ -36,10 +36,10 @@ N_RES_BLOCKS         = 5    # GPU용 확장 (검증 때는 3)
 N_FILTERS            = 128  # GPU용 확장 (검증 때는 64)
 BATCH_SIZE           = 512
 TRAIN_STEPS_PER_ITER = 10
-EVAL_INTERVAL        = 20
+EVAL_INTERVAL        = 10   # 30iter 규모: 10마다 평가 → iter 10/20/30에서 승률 출력
 EVAL_GAMES           = 30
 TEMPERATURE_CUTOFF   = 20
-CKPT_INTERVAL        = 10
+CKPT_INTERVAL        = 5    # 5iter마다 체크포인트 저장
 LR                   = 2e-3
 L2_REG               = 1e-4
 
@@ -50,9 +50,9 @@ SMOKE_SP_GAMES   = 25   # B안(인터 게임 배치): 본 학습과 동일 sp_ga
 SMOKE_N_ITER     = 3
 
 # ── [본 학습] 스모크 후 아래 값 직접 조정 ────────────────────────────────────
-FULL_N_SIM       = 200   # ← 스모크 시간 보고 조정
-FULL_SP_GAMES    = 25    # ← 스모크 시간 보고 조정
-FULL_N_ITER      = 100   # ← 스모크 시간 보고 조정
+FULL_N_SIM       = 200
+FULL_SP_GAMES    = 25
+FULL_N_ITER      = 30
 
 
 # ─────────────────────────────────────────────────────────────────────────
