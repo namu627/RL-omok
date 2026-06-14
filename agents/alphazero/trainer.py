@@ -263,17 +263,97 @@ class AlphaZeroTrainer:
     # ── 내부 메서드 ───────────────────────────────────────────────────
 
     def _collect_self_play(self) -> list[tuple]:
-        """sp_games 게임 self-play → 증강 포함 데이터 반환."""
+        """sp_games 게임을 동시에 진행하는 인터 게임 배치 self-play.
+
+        각 sim_step마다 모든 활성 게임의 리프를 모아 predict_batch 1회 호출.
+        각 게임의 MCTS 트리는 완전히 독립 → 직렬 _play_one_game과 수학적으로 동일.
+        """
         mcts = MCTS(
             self.net, self.env,
             n_simulations=self.n_sim,
             c_puct=self.c_puct,
             device=self.device,
         )
+
+        # ── 초기화 ──────────────────────────────────────────────────
+        initial_board  = self.env.reset()
+        initial_player = self.env.current_player   # 항상 BLACK
+
+        boards      = [initial_board.copy() for _ in range(self.sp_games)]
+        players     = [initial_player] * self.sp_games
+        episodes    : list[list[tuple]] = [[] for _ in range(self.sp_games)]
+        move_counts = [0] * self.sp_games
+        done_mask   = [False] * self.sp_games
+        rewards     = [0.0] * self.sp_games
+
+        # ── 메인 루프: 모든 게임이 종료될 때까지 ─────────────────────
+        while not all(done_mask):
+            active_idx = [i for i, d in enumerate(done_mask) if not d]
+
+            # 루트 빌드 — legal_actions가 env.current_player를 참조하므로
+            # _build_root 호출 전에 해당 게임의 플레이어로 동기화
+            roots: dict[int, object] = {}
+            for i in active_idx:
+                self.env.current_player = players[i]
+                roots[i] = mcts._build_root(boards[i], players[i])
+
+            # n_sim 시뮬레이션 (게임 간 배치 평가)
+            for _ in range(self.n_sim):
+                to_eval: list[tuple] = []   # (game_idx, leaf, path)
+
+                for i in active_idx:
+                    leaf, path = mcts._select_leaf(roots[i])
+                    if leaf.is_terminal:
+                        mcts._backup(path, mcts._terminal_value(leaf))
+                    else:
+                        to_eval.append((i, leaf, path))
+
+                if to_eval:
+                    ev_boards  = [l.board for _, l, _ in to_eval]
+                    ev_players = [l.current_player for _, l, _ in to_eval]
+                    policies, values = self.net.predict_batch(
+                        ev_boards, ev_players, device=self.device
+                    )
+                    for (i, leaf, path), pol, val in zip(to_eval, policies, values):
+                        mcts._expand_and_backup(leaf, path, pol, val)
+
+            # 착수 선택 및 게임 상태 업데이트
+            for i in active_idx:
+                temp = 1.0 if move_counts[i] < self.temp_cutoff else 1e-4
+                pi   = mcts._visit_counts_to_probs(roots[i], temp)
+
+                state_t = board_to_tensor(boards[i], players[i])
+                episodes[i].append((state_t, pi.copy(), players[i]))
+
+                action             = int(np.random.choice(len(pi), p=pi))
+                new_board, reward, done, _ = self.env.step_board(
+                    boards[i], action, players[i]
+                )
+                boards[i]      = new_board
+                move_counts[i] += 1
+
+                if done:
+                    done_mask[i] = True
+                    rewards[i]   = reward
+                else:
+                    players[i] = -players[i]
+
+        # ── 에피소드 → 훈련 데이터 변환 ─────────────────────────────
         all_data: list[tuple] = []
-        for _ in range(self.sp_games):
-            game_data = self._play_one_game(mcts)
-            all_data.extend(game_data)
+        for i in range(self.sp_games):
+            episode = episodes[i]
+            reward  = rewards[i]
+            winner  = episode[-1][2] if reward == 1.0 else 0
+
+            for state_t, pi, p in episode:
+                if winner == 0:
+                    z = 0.0
+                elif p == winner:
+                    z = 1.0
+                else:
+                    z = -1.0
+                all_data.extend(augment_data(state_t, pi, z, self.board_size))
+
         return all_data
 
     def _play_one_game(self, mcts: MCTS) -> list[tuple]:

@@ -156,3 +156,28 @@ class AlphaZeroNet(nn.Module):
         log_policy, val = self(tensor)
         policy = log_policy.exp().squeeze(0).cpu().numpy()
         return policy, float(val.item())
+
+    @torch.no_grad()
+    def predict_batch(
+        self,
+        boards: list[np.ndarray],
+        players: list[int],
+        device: str = "cpu",
+    ) -> tuple[list[np.ndarray], list[float]]:
+        """
+        여러 보드 상태를 단일 forward로 배치 처리. 추론 전용.
+
+        boards  : N개의 (board_size, board_size) numpy array
+        players : N개의 current_player 값 (BLACK=1 또는 WHITE=-1)
+        반환:
+          policies : N개의 (board_size²,) numpy float32
+          values   : N개의 float ∈ [-1, 1]
+        """
+        self.eval()
+        tensors = torch.stack(
+            [board_to_tensor(b, p) for b, p in zip(boards, players)]
+        ).to(device)                                       # (N, 3, H, W)
+        log_policy, val = self(tensors)
+        policies = list(log_policy.exp().cpu().numpy())   # list of (H*W,)
+        values   = val.squeeze(1).cpu().tolist()          # list of float
+        return policies, values

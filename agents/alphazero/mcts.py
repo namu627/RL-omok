@@ -148,46 +148,69 @@ class MCTS:
         return root
 
     def _simulate(self, root: MCTSNode) -> None:
-        """선택 → 평가·확장 → 역전파 한 사이클."""
+        """선택 → 평가·확장 → 역전파 한 사이클 (래퍼)."""
+        leaf, path = self._select_leaf(root)
+
+        if leaf.is_terminal:
+            leaf_value = self._terminal_value(leaf)
+            self._backup(path, leaf_value)
+        else:
+            policy, value = self.net.predict(
+                leaf.board, leaf.current_player, device=self.device
+            )
+            self._expand_and_backup(leaf, path, policy, value)
+
+    def _select_leaf(self, root: MCTSNode) -> tuple[MCTSNode, list[MCTSNode]]:
+        """루트에서 PUCT로 리프 또는 종료 노드까지 내려가 (leaf, path) 반환.
+
+        평가·확장·역전파는 하지 않는다.
+        """
         node = root
         path: list[MCTSNode] = [node]
-
-        # ── 선택 ──────────────────────────────────────────────────────
         while not node.is_leaf() and not node.is_terminal:
             node = self._select_child(node)
             path.append(node)
+        return node, path
 
-        # ── 평가·확장 ────────────────────────────────────────────────
-        if node.is_terminal:
-            # 종료 노드: 부모가 이겼으면 자식 시점 = -1
-            if node.winner == 0:
-                leaf_value = 0.0          # 무승부
-            elif node.winner == node.parent.current_player:
-                leaf_value = -1.0         # 부모(승자) 시점에서 자식은 패자
-            else:
-                leaf_value = 1.0          # 부모가 진 경우
+    def _terminal_value(self, leaf: MCTSNode) -> float:
+        """종료 노드의 leaf_value 계산 (leaf의 current_player 시점).
+
+        부모가 이긴 경우: 자식(leaf) 시점에서 -1.
+        무승부: 0.
+        부모가 진 경우(금수 등): 자식 시점에서 +1.
+        """
+        if leaf.winner == 0:
+            return 0.0
+        if leaf.winner == leaf.parent.current_player:
+            return -1.0   # 부모(착수자)가 이김 → 자식은 패자
+        return 1.0        # 부모가 짐 (금수 자폭 등) → 자식에게 유리
+
+    def _expand_and_backup(
+        self,
+        leaf: MCTSNode,
+        path: list[MCTSNode],
+        policy: np.ndarray,
+        value: float,
+    ) -> None:
+        """비종료 리프를 외부에서 받은 policy로 확장하고 value로 역전파.
+
+        policy : net.predict_batch 등 외부 평가기가 반환한 (board_size²,) 배열.
+                 마스킹·정규화를 여기서 수행하므로 raw 출력 그대로 전달하면 된다.
+        value  : 이 노드의 current_player 시점 가치 ∈ [-1, 1].
+        """
+        # 트리 내부: 금수 필터 없이 빈 칸 전체를 후보로 삼는다 (방안 B).
+        raw_legal = self._raw_legal_actions(leaf.board)
+        mask = np.zeros_like(policy)
+        mask[raw_legal] = 1.0
+        policy = policy * mask
+        s = policy.sum()
+        if s > 0:
+            policy /= s
         else:
-            # 리프: 네트워크 평가 + 확장
-            policy, value = self.net.predict(
-                node.board, node.current_player, device=self.device
-            )
-            # 트리 내부: 금수 필터 없이 빈 칸 전체를 후보로 삼는다 (방안 B).
-            # 금수 착수 시 _apply_action → env.step()이 reward=-1 반환 → 역전파로 회피 학습.
-            raw_legal = self._raw_legal_actions(node.board)
-            mask = np.zeros_like(policy)
-            mask[raw_legal] = 1.0
-            policy = policy * mask
-            s = policy.sum()
-            if s > 0:
-                policy /= s
-            else:
-                policy[raw_legal] = 1.0 / len(raw_legal)
+            policy[raw_legal] = 1.0 / len(raw_legal)
 
-            self._expand(node, policy, raw_legal)   # legal 전달 (방안 A: 재계산 없음)
-            leaf_value = float(value)   # 이 노드의 current_player 시점
-
-        # ── 역전파 ────────────────────────────────────────────────────
-        self._backup(path, leaf_value)
+        self._expand(leaf, policy, raw_legal)
+        self._backup(path, float(value))
 
     def _select_child(self, node: MCTSNode) -> MCTSNode:
         """PUCT 점수가 가장 높은 자식 선택."""
