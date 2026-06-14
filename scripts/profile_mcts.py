@@ -262,33 +262,49 @@ def _pb_timed(boards, players, device="cpu"):
     return r
 net_large.predict_batch = _pb_timed
 
+# step_board 호출 카운터 (BLACK 차례면 ≈ classify_move 1회)
+_step_calls = [0]
+_orig_sb = env.step_board
+def _sb_counted(board, action, player):
+    _step_calls[0] += 1
+    return _orig_sb(board, action, player)
+env.step_board = _sb_counted
+
 # 워밍업
 for _ in range(3):
     net_large.predict_batch(boards_p, players_p, device=DEVICE)
 gpu_sync()
 _pb_total[0] = 0.0; _pb_count[0] = 0; _pb_n_total[0] = 0
 
-# 실제 측정: while-loop 1 step
-_t_root = [0.0]; _t_sim = [0.0]; _t_action = [0.0]
+# 실제 측정: while-loop 1 step (LAZY expansion)
+_t_root = [0.0]; _t_sim = [0.0]
 active_idx = list(range(SP_GAMES))
+_step_calls[0] = 0
 
 gpu_sync()
 t0_par = time.perf_counter()
 
-# root batch build
+# root batch build — LAZY: _policy/_legal_actions 저장, _expand 미호출
 t_rb = time.perf_counter()
 root_policies, _ = net_large.predict_batch(boards_p, players_p, device=DEVICE)
 roots_p = {}
 for j, i in enumerate(active_idx):
     env.current_player = players_p[i]
-    legal = env.legal_actions(boards_p[i])
+    legal = env.legal_actions(boards_p[i])   # BLACK: classify_move × ~220
     root = MCTSNode(parent=None, action=None, board=boards_p[i].copy(), current_player=players_p[i])
     pol = root_policies[j].copy()
     mask = np.zeros(225); mask[legal] = 1.0; pol *= mask
-    s = pol.sum(); pol = pol / s if s > 0 else (np.zeros(225).__setitem__(legal, 1/len(legal)) or pol)
-    mcts_obj._expand(root, pol, legal)
+    s = pol.sum()
+    if s > 0:
+        pol /= s
+    else:
+        pol[legal] = 1.0 / len(legal)
+    root._policy = pol          # lazy: 자식 미생성
+    root._legal_actions = legal
     roots_p[i] = root
 _t_root[0] = time.perf_counter() - t_rb
+step_calls_root = _step_calls[0]   # legal_actions 내부 호출 수
+_step_calls[0] = 0                 # sim 구간만 다시 카운트
 
 # n_sim simulation rounds
 batch_sizes = []
@@ -309,21 +325,39 @@ for _ in range(N_SIM):
         for (i, leaf, path), pol, val in zip(to_eval, policies, values):
             mcts_obj._expand_and_backup(leaf, path, pol, val)
 _t_sim[0] = time.perf_counter() - t_sim_start
+step_calls_sim = _step_calls[0]    # _create_child 1회 = step_board 1회
 
 gpu_sync()
 t_par_total = time.perf_counter() - t0_par
 net_large.predict_batch = _orig_pb
+env.step_board = _orig_sb          # 패치 해제
 
 print(f"    총 시간              : {t_par_total*1000:.1f} ms")
-print(f"    root build           : {_t_root[0]*1000:.1f} ms  "
-      f"({SP_GAMES}게임 root 빌드, legal_actions + _expand 포함)")
+print(f"    root build (lazy)    : {_t_root[0]*1000:.1f} ms  "
+      f"({SP_GAMES}게임, legal_actions만, _expand 미호출)")
 print(f"    n_sim={N_SIM} rounds  : {_t_sim[0]*1000:.1f} ms  "
       f"(predict_batch {_pb_count[0]}회 포함)")
 print(f"    ├─ predict_batch()   : {_pb_total[0]*1000:.1f} ms  "
       f"({_pb_count[0]}회, avg batch={_pb_n_total[0]/max(_pb_count[0],1):.1f})")
-print(f"    └─ Python 트리 로직  : {(_t_sim[0]-_pb_total[0])*1000:.1f} ms")
+print(f"    └─ Python 트리 로직  : {(_t_sim[0]-_pb_total[0])*1000:.1f} ms  "
+      f"(_select_leaf + _create_child×{step_calls_sim})")
 print(f"    실제 배치 크기 분포  : min={min(batch_sizes)}  "
       f"avg={sum(batch_sizes)/len(batch_sizes):.1f}  max={max(batch_sizes)}")
+# step_board 호출 수 (lazy 효과 확인)
+total_lazy  = step_calls_root + step_calls_sim
+eager_root  = SP_GAMES * 225      # 옛 _expand: 25게임 × 225 자식
+eager_sim   = N_SIM * SP_GAMES * 225  # 옛 _expand_and_backup: 50×25×225
+eager_total = eager_root + eager_sim
+print(f"\n  [step_board 호출 수 — lazy vs eager 비교]")
+print(f"    root build: {step_calls_root:6d}회  "
+      f"(legal_actions 내부, BLACK 차례면 ≈ classify_move 호출)")
+print(f"    sim rounds: {step_calls_sim:6d}회  "
+      f"(_create_child 1회 = step_board 1회, lazy)")
+print(f"    lazy 합계 : {total_lazy:6d}회")
+print(f"    eager 예상: {eager_total:6d}회  "
+      f"(root {eager_root} + sim {eager_sim})")
+print(f"    감소 비율 : {eager_total/max(total_lazy,1):.1f}×  "
+      f"(예상 46×, 실측)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -344,25 +378,27 @@ for sp in [5, 25]:
     print(f"  sp={sp:2d}: 직렬={t_serial_iter:.0f}s/iter  "
           f"병렬(while×{avg_moves_per_game})≈{t_parallel_iter:.0f}s/iter")
 
-print(f"\n  (참고) 병렬 while-loop 1회 구성:")
+print(f"\n  (참고) 병렬 while-loop 1회 구성 [Lazy Expansion 적용 후]:")
 root_frac = _t_root[0] / t_par_total * 100
 sim_frac  = _t_sim[0]  / t_par_total * 100
 pred_frac = _pb_total[0] / t_par_total * 100
 cpu_frac  = (_t_sim[0] - _pb_total[0]) / t_par_total * 100
-print(f"    root build      : {root_frac:.0f}%  (legal_actions × {SP_GAMES} + _expand × {SP_GAMES})")
-print(f"    sim rounds      : {sim_frac:.0f}%")
-print(f"      predict_batch : {pred_frac:.0f}%  ← GPU")
-print(f"      Python 트리   : {cpu_frac:.0f}%  ← CPU (_select_leaf + _expand_and_backup)")
+print(f"    root build (lazy) : {root_frac:.0f}%  (legal_actions × {SP_GAMES}, no _expand)")
+print(f"    sim rounds        : {sim_frac:.0f}%")
+print(f"      predict_batch   : {pred_frac:.0f}%  ← GPU")
+print(f"      Python 트리     : {cpu_frac:.0f}%  ← CPU (_select_leaf + _create_child)")
 
-print("\n[결론]")
-if cpu_frac > 50:
-    print(f"  → 병목: Python CPU 트리 로직 ({cpu_frac:.0f}%)")
-    print(f"       주범: _expand가 매 leaf마다 {len(raw_legal)}개 step_board 호출")
-    print(f"            + BLACK 차례면 step_board마다 classify_move 호출")
-    print(f"  → 해결 방향: Lazy Expansion (자식을 전부 미리 만들지 않고 선택 시 1개씩 생성)")
-elif pred_frac > 50:
-    print(f"  → 병목: GPU predict_batch ({pred_frac:.0f}%)")
-    print(f"  → 해결 방향: 더 큰 배치 (sp_games 증가) 또는 n_sim 감소")
+print("\n[결론]  — Lazy Expansion 적용 후")
+if pred_frac >= cpu_frac and pred_frac >= root_frac:
+    print(f"  ✓ GPU predict_batch가 주 비용 ({pred_frac:.0f}%) — 배치화 정상 작동")
+    print(f"    CPU Python: {cpu_frac:.0f}%,  root build: {root_frac:.0f}%")
+    print(f"    → step_board 병목 해소됨 (eager 대비 {eager_total/max(total_lazy,1):.0f}× 감소)")
+elif cpu_frac > 50:
+    print(f"  △ Python 트리 로직이 여전히 병목 ({cpu_frac:.0f}%)")
+    print(f"    root build: {root_frac:.0f}%  predict_batch: {pred_frac:.0f}%")
+    print(f"    step_board sim: {step_calls_sim}회 (_create_child — 이 부분은 해소됨)")
+    print(f"    → legal_actions(BLACK) root build {step_calls_root}회가 남은 주 병목")
 else:
-    print(f"  → 병목: root build ({root_frac:.0f}%)")
-    print(f"       legal_actions(BLACK)가 {len(raw_legal)}회 classify_move 호출")
+    print(f"  △ root build가 주 비용 ({root_frac:.0f}%)")
+    print(f"    → legal_actions(BLACK) = classify_move × ~{len(raw_legal)} × {SP_GAMES}게임")
+    print(f"    GPU: {pred_frac:.0f}%,  Python sim: {cpu_frac:.0f}%")

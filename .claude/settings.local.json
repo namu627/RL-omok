@@ -36,7 +36,9 @@
       "Bash(python -m pytest --collect-only -q)",
       "Bash(python -m pytest tests/ env/ -v --tb=short)",
       "Bash(python -m pytest tests/test_mcts_parallel.py -v)",
-      "Bash(python -m pytest --tb=short -q)"
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/profile_mcts.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python -X utf8 -c \"import ast; ast.parse\\(open\\('scripts/profile_mcts.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
     ]
   }
 }
