@@ -105,12 +105,18 @@ class MCTS:
         n_simulations: int = 200,
         c_puct: float = 1.5,
         device: str = "cpu",
+        dirichlet_alpha: float = 0.3,
+        dirichlet_epsilon: float = 0.25,
+        add_dirichlet_noise: bool = False,
     ):
         self.net = network
         self.env = env
         self.n_sim = n_simulations
         self.c_puct = c_puct
         self.device = device
+        self.dir_alpha = dirichlet_alpha
+        self.dir_epsilon = dirichlet_epsilon
+        self.add_dirichlet_noise = add_dirichlet_noise
 
     # ── 공개 인터페이스 ───────────────────────────────────────────────
 
@@ -150,9 +156,23 @@ class MCTS:
             policy /= s
         else:
             policy[legal] = 1.0 / len(legal)
+        if self.add_dirichlet_noise and legal:
+            policy = self._apply_dirichlet_noise(policy, legal)
         root._policy = policy
         root._legal_actions = legal
         return root
+
+    def _apply_dirichlet_noise(self, policy: np.ndarray, legal: list[int]) -> np.ndarray:
+        """루트 사전 확률에 Dirichlet 노이즈 혼합 (self-play 탐험 다양성용).
+
+        p_root = (1 - ε) · p_net + ε · Dir(α)
+        α=0.3: 중간 집중도 (바둑 0.03, 체스 0.3의 중간, 15×15 합법 수 규모에 적합)
+        ε=0.25: 표준값 (AlphaZero 논문)
+        """
+        noise = np.random.dirichlet([self.dir_alpha] * len(legal))
+        policy = policy.copy()
+        policy[legal] = (1 - self.dir_epsilon) * policy[legal] + self.dir_epsilon * noise
+        return policy
 
     def _simulate(self, root: MCTSNode) -> None:
         """선택 → 평가·확장 → 역전파 한 사이클 (래퍼)."""

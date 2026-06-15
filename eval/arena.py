@@ -72,8 +72,8 @@ def _mcts_fn(net: AlphaZeroNet, env: GomokuEnv, n_sim: int, device: str):
     """MCTS greedy 착수 함수를 반환하는 클로저."""
     def fn(board, player) -> int:
         mcts = MCTS(net, env, n_simulations=n_sim, device=device)
-        pi = mcts.get_action_probs(board, player, temperature=1e-4)
-        return int(np.argmax(pi))
+        pi = mcts.get_action_probs(board, player, temperature=1.0)
+        return int(np.random.choice(len(pi), p=pi))
     return fn
 
 

@@ -55,8 +55,8 @@ def _load_net(ckpt_path: str):
 def _mcts_fn(net, env):
     def fn(board, player) -> int:
         mcts = MCTS(net, env, n_simulations=N_SIM, device=DEVICE)
-        pi = mcts.get_action_probs(board, player, temperature=1e-4)
-        return int(np.argmax(pi))
+        pi = mcts.get_action_probs(board, player, temperature=1.0)
+        return int(np.random.choice(len(pi), p=pi))
     return fn
 
 

@@ -291,6 +291,7 @@ class TestParallelCollectIntegrity:
     def _make_trainer(self, seed: int, sp: int = 4, n_sim: int = 8,
                       board: int = 6, n_row: int = 4) -> AlphaZeroTrainer:
         torch.manual_seed(seed)
+        np.random.seed(seed)   # Dirichlet 노이즈 재현성
         return AlphaZeroTrainer(
             board_size=board, n_in_row=n_row,
             n_simulations=n_sim, n_iterations=1,

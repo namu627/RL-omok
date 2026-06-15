@@ -124,6 +124,8 @@ class AlphaZeroTrainer:
         device: str = "cpu",
         temperature_cutoff: int = 12,
         ckpt_interval: int = 20,
+        dirichlet_alpha: float = 0.3,
+        dirichlet_epsilon: float = 0.25,
     ):
         self.board_size = board_size
         self.n_in_row = n_in_row
@@ -140,6 +142,8 @@ class AlphaZeroTrainer:
         self.device = device
         self.temp_cutoff = temperature_cutoff
         self.ckpt_interval = ckpt_interval
+        self.dir_alpha = dirichlet_alpha
+        self.dir_epsilon = dirichlet_epsilon
 
         self.env = GomokuEnv(board_size=board_size, n_in_row=n_in_row, renju=renju)
         self.net = AlphaZeroNet(
@@ -316,6 +320,12 @@ class AlphaZeroTrainer:
                     policy /= s
                 else:
                     policy[legal] = 1.0 / len(legal)
+                # Dirichlet 노이즈: self-play 루트에만, 평가 시엔 사용 안 함
+                if legal:
+                    noise = np.random.dirichlet([self.dir_alpha] * len(legal))
+                    policy[legal] = (
+                        (1 - self.dir_epsilon) * policy[legal] + self.dir_epsilon * noise
+                    )
                 root._policy = policy
                 root._legal_actions = legal
                 roots[i] = root
