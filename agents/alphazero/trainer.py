@@ -185,9 +185,15 @@ class AlphaZeroTrainer:
             self.buffer.push(new_data)
 
             # 미니배치 학습
+            last_p_loss = last_v_loss = float("nan")
             if len(self.buffer) >= self.batch_size:
+                p_losses, v_losses = [], []
                 for _ in range(self.train_steps):
-                    self._train_step()
+                    p_loss, v_loss = self._train_step()
+                    p_losses.append(p_loss)
+                    v_losses.append(v_loss)
+                last_p_loss = sum(p_losses) / len(p_losses)
+                last_v_loss = sum(v_losses) / len(v_losses)
 
             # 주기 평가
             if iteration % self.eval_interval == 0:
@@ -199,6 +205,8 @@ class AlphaZeroTrainer:
                     f"  iter {iteration:4d}/{self.n_iter}"
                     f"  buf={len(self.buffer):6d}"
                     f"  win={win_rate:.3f}"
+                    f"  p_loss={last_p_loss:.4f}"
+                    f"  v_loss={last_v_loss:.4f}"
                     f"  iter_t={iter_time:.1f}s"
                     f"  total={elapsed/60:.1f}m"
                 )
@@ -208,6 +216,8 @@ class AlphaZeroTrainer:
                 print(
                     f"  iter {iteration:4d}/{self.n_iter}"
                     f"  buf={len(self.buffer):6d}"
+                    f"  p_loss={last_p_loss:.4f}"
+                    f"  v_loss={last_v_loss:.4f}"
                     f"  iter_t={iter_time:.1f}s"
                     f"  total={elapsed/60:.1f}m",
                     flush=True,
@@ -376,7 +386,13 @@ class AlphaZeroTrainer:
         for i in range(self.sp_games):
             episode = episodes[i]
             reward  = rewards[i]
-            winner  = episode[-1][2] if reward == 1.0 else 0
+            last_player = episode[-1][2]
+            if reward == 1.0:
+                winner = last_player       # 착수자 승
+            elif reward == -1.0:
+                winner = -last_player      # 금수 등 착수자 패 → 상대방 승
+            else:
+                winner = 0                 # 무승부
 
             for state_t, pi, p in episode:
                 if winner == 0:
@@ -429,8 +445,8 @@ class AlphaZeroTrainer:
 
         return result
 
-    def _train_step(self) -> None:
-        """배치 샘플링 → 정책/가치 손실 역전파."""
+    def _train_step(self) -> tuple[float, float]:
+        """배치 샘플링 → 정책/가치 손실 역전파. (policy_loss, value_loss) 반환."""
         batch = self.buffer.sample(self.batch_size)
         state_ts, pis, zs = zip(*batch)
 
@@ -454,6 +470,7 @@ class AlphaZeroTrainer:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        return policy_loss.item(), value_loss.item()
 
     def _evaluate_vs_random(self) -> float:
         """AlphaZero vs 랜덤봇 eval_games 판. 흑/백 각 절반씩."""

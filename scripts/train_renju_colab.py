@@ -25,7 +25,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ── 경로: Google Drive 마운트 감지 → Drive 우선, 없으면 로컬 ─────────────────
 ROOT     = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _DRIVE   = "/content/drive/MyDrive/rl_omok"
-CKPT_DIR = os.path.join(_DRIVE, "checkpoints") if os.path.isdir("/content/drive") else os.path.join(ROOT, "checkpoints")
+CKPT_DIR = os.path.join(_DRIVE, "checkpoints_dirichlet") if os.path.isdir("/content/drive") else os.path.join(ROOT, "checkpoints_dirichlet")
 PLOT_DIR = _DRIVE                              if os.path.isdir("/content/drive") else ROOT
 
 # ── 공통 고정 설정 ────────────────────────────────────────────────────────
@@ -66,6 +66,10 @@ def print_device_info():
     print(f"CKPT   : {CKPT_DIR}")
 
 
+DIRICHLET_ALPHA   = 0.3   # 렌주 15×15 합법 수 규모 기준
+DIRICHLET_EPSILON = 0.25  # AlphaZero 논문 표준값
+
+
 def make_trainer(n_sim, sp_games, n_iter):
     return AlphaZeroTrainer(
         board_size=BOARD_SIZE, n_in_row=N_IN_ROW, renju=RENJU,
@@ -80,6 +84,8 @@ def make_trainer(n_sim, sp_games, n_iter):
         ckpt_dir=CKPT_DIR, device=DEVICE,
         temperature_cutoff=TEMPERATURE_CUTOFF,
         ckpt_interval=CKPT_INTERVAL,
+        dirichlet_alpha=DIRICHLET_ALPHA,
+        dirichlet_epsilon=DIRICHLET_EPSILON,
     )
 
 
@@ -108,9 +114,10 @@ def run_smoke():
 
 def run_train(resume: bool = False):
     print("=" * 58)
-    print("본 학습 — AlphaZero 렌주 15×15")
+    print("본 학습 — AlphaZero 렌주 15×15  [Dirichlet 노이즈 활성]")
     print(f"  n_sim={FULL_N_SIM}  sp_games={FULL_SP_GAMES}  n_iter={FULL_N_ITER}")
     print(f"  net: {N_RES_BLOCKS}blocks × {N_FILTERS}ch  |  resume={resume}")
+    print(f"  dirichlet: alpha={DIRICHLET_ALPHA}  epsilon={DIRICHLET_EPSILON}")
     print_device_info()
     print("=" * 58)
 
