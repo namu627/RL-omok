@@ -40,7 +40,11 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/profile_mcts.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "Bash(python -X utf8 -c \"import ast; ast.parse\\(open\\('scripts/profile_mcts.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "Bash(python -X utf8 -c \"import ast; ast.parse\\(open\\('scripts/train_renju_colab.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
-      "Bash(python -m pytest -v)"
+      "Bash(python -m pytest -v)",
+      "Bash(python -X utf8 -m pytest tests/ -x -q)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

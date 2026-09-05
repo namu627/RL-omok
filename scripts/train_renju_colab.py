@@ -23,10 +23,12 @@ from agents.alphazero.trainer import AlphaZeroTrainer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 경로: Google Drive 마운트 감지 → Drive 우선, 없으면 로컬 ─────────────────
+# checkpoints_banan1: 방안1(트리 내부 금수 완전 배제) 전용 실행 — 기존
+# checkpoints/, checkpoints_dirichlet/ 와 분리해 덮어쓰기 방지.
 ROOT     = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _DRIVE   = "/content/drive/MyDrive/rl_omok"
-CKPT_DIR = os.path.join(_DRIVE, "checkpoints_dirichlet") if os.path.isdir("/content/drive") else os.path.join(ROOT, "checkpoints_dirichlet")
-PLOT_DIR = _DRIVE                              if os.path.isdir("/content/drive") else ROOT
+CKPT_DIR = os.path.join(_DRIVE, "checkpoints_banan1") if os.path.isdir("/content/drive") else os.path.join(ROOT, "checkpoints_banan1")
+PLOT_DIR = CKPT_DIR
 
 # ── 공통 고정 설정 ────────────────────────────────────────────────────────
 BOARD_SIZE           = 15
@@ -34,7 +36,7 @@ N_IN_ROW             = 5
 RENJU                = True
 N_RES_BLOCKS         = 5    # GPU용 확장 (검증 때는 3)
 N_FILTERS            = 128  # GPU용 확장 (검증 때는 64)
-BATCH_SIZE           = 512
+BATCH_SIZE           = 128  # 로컬 GTX 1650 (4GB) 대응 — 512는 OOM 위험
 TRAIN_STEPS_PER_ITER = 10
 EVAL_INTERVAL        = 10   # 30iter 규모: 10마다 평가 → iter 10/20/30에서 승률 출력
 EVAL_GAMES           = 30

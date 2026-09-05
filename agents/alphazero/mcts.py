@@ -10,12 +10,14 @@ PUCT 기반 Monte Carlo Tree Search (AlphaZero 스타일).
 5. 종료 노드의 리프 값: parent.current_player가 이겼으면 자식 시점 = -1,
                          무승부 = 0, parent가 지면(상대가 이기면) = +1
 
-렌주 금수 처리 (방안 B):
+렌주 금수 처리 (방안 1):
   - 루트 노드: env.legal_actions()로 금수 제외 — 실제 착수는 항상 합법
-  - 트리 내부 노드: _raw_legal_actions()로 빈 칸 전체 허용 (금수 필터 없음)
-    → 흑이 트리 내부에서 금수 자리를 두면 step_board가 reward=-1 반환
-    → _create_child가 해당 자식을 winner=-BLACK 종료 노드로 생성
-    → 역전파로 Q값이 -1 방향으로 수렴하여 MCTS가 자연히 금수를 회피
+  - 트리 내부 노드: _legal_actions_for()로 동일하게 금수 제외
+    → 흑은 트리 어디서도 금수 자리를 선택지로 갖지 않음 (탐색 자체에서 배제)
+    → step_board의 reward=-1 분기는 이제 도달 불가 (안전망으로 코드만 유지)
+  - (구) 방안 B: 트리 내부는 _raw_legal_actions()로 필터 없이 허용하고
+    금수 자폭을 역전파로 학습시키는 방식 — 디리클레 노이즈와 결합해
+    흑에게 불리한 편향을 만든다는 진단에 따라 폐기.
 
 Lazy Expansion (성능):
   - 자식 노드를 전부 미리 만들지 않고 PUCT가 처음 선택할 때 1개씩 생성.
@@ -233,18 +235,18 @@ class MCTS:
                  마스킹·정규화를 여기서 수행한다.
         value  : 이 노드의 current_player 시점 가치 ∈ [-1, 1].
         """
-        raw_legal = self._raw_legal_actions(leaf.board)
+        legal = self._legal_actions_for(leaf.board, leaf.current_player)
         mask = np.zeros_like(policy)
-        mask[raw_legal] = 1.0
+        mask[legal] = 1.0
         policy = policy * mask
         s = policy.sum()
         if s > 0:
             policy /= s
         else:
-            policy[raw_legal] = 1.0 / len(raw_legal)
+            policy[legal] = 1.0 / len(legal)
 
         leaf._policy = policy
-        leaf._legal_actions = raw_legal
+        leaf._legal_actions = legal
         self._backup(path, float(value))
 
     def _select_action(self, node: MCTSNode) -> int:
@@ -297,9 +299,17 @@ class MCTS:
         )
 
     def _raw_legal_actions(self, board: np.ndarray) -> list[int]:
-        """빈 칸 전체 인덱스 반환 (렌주 금수 필터 없음). 트리 내부 노드 전용."""
+        """빈 칸 전체 인덱스 반환 (렌주 금수 필터 없음). (구) 방안 B / 프로파일링용으로 유지."""
         n = self.env.board_size
         return [int(r) * n + int(c) for r, c in np.argwhere(board == 0)]
+
+    def _legal_actions_for(self, board: np.ndarray, player: int) -> list[int]:
+        """방안 1: player 시점 합법 수 (흑 금수 제외) 반환. 트리 내부 노드 전용.
+
+        env.legal_actions()가 self.env.current_player를 참조하므로 호출 전 동기화한다.
+        """
+        self.env.current_player = player
+        return self.env.legal_actions(board)
 
     def _apply_action(
         self, board: np.ndarray, action: int, player: int

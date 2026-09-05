@@ -72,6 +72,8 @@ def _play_one(env, black_fn, white_fn) -> int:
             player = env.current_player
     if reward == 1:
         return env.current_player
+    if reward == -1:
+        return -env.current_player  # 금수 착수자의 상대방 승
     return 0
 
 

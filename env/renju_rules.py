@@ -15,6 +15,7 @@ Renju 금수 규칙 구현.
 """
 
 import numpy as np
+from numba import njit
 
 EMPTY: int = 0
 BLACK: int = 1
@@ -30,17 +31,23 @@ DIRECTIONS: list[tuple[int, int]] = [(0, 1), (1, 0), (1, 1), (1, -1)]
 # 내부 보조 함수
 # ─────────────────────────────────────────────
 
+@njit(cache=True)
 def _count_dir(board: np.ndarray, row: int, col: int,
                dr: int, dc: int, color: int) -> int:
-    """(row,col) 제외, (dr,dc) 방향으로 연속된 color 돌 수."""
+    """(row,col) 제외, (dr,dc) 방향으로 연속된 color 돌 수.
+
+    numpy 벡터화(arange+fancy indexing)는 13배 느림(실측, 호출당 작업량이 너무 작아
+    배열 생성 오버헤드가 지배적) — numba njit으로 기존 파이썬 루프를 그대로 컴파일.
+    """
     n, r, c = 0, row + dr, col + dc
-    while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and board[r][c] == color:
+    while 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and board[r, c] == color:
         n += 1
         r += dr
         c += dc
     return n
 
 
+@njit(cache=True)
 def _line_len(board: np.ndarray, row: int, col: int,
               dr: int, dc: int, color: int) -> int:
     """(row,col) 포함, 해당 축 양방향 총 연속 길이."""
@@ -49,6 +56,7 @@ def _line_len(board: np.ndarray, row: int, col: int,
             + _count_dir(board, row, col, -dr, -dc, color))
 
 
+@njit(cache=True)
 def _count_fours_in_direction(board: np.ndarray, row: int, col: int,
                               dr: int, dc: int) -> int:
     """
@@ -58,36 +66,84 @@ def _count_fours_in_direction(board: np.ndarray, row: int, col: int,
     "4" 패턴: 5-셀 윈도우 안에 흑 4개 + 빈칸 1개이며,
     빈칸을 채웠을 때 정확히 5연속이 되는 경우.
     같은 흑돌 4개를 공유하는 윈도우(예: 열린 4의 두 완성점)는 같은 4로 취급.
+
+    numba nopython 모드는 frozenset/set을 지원하지 않아, "같은 흑돌 4개 집합"
+    중복 제거를 (정렬된 좌표 4개 → base-225 정수 키) 인코딩 + 소규모 배열 선형
+    탐색으로 대체. 관찰 가능한 동작(반환값)은 원본과 동일 — 랜덤 9만+건 비교로 검증.
     """
-    seen: set[frozenset] = set()
+    seen_keys = np.zeros(5, dtype=np.int64)
+    n_seen = 0
     count = 0
+    rs = np.empty(5, dtype=np.int64)
+    cs = np.empty(5, dtype=np.int64)
+    codes = np.empty(4, dtype=np.int64)
+
     for start_offset in range(5):
         r0 = row - start_offset * dr
         c0 = col - start_offset * dc
-        vals: list[int] = []
-        pos: list[tuple[int, int]] = []
         valid = True
         for i in range(5):
-            r, c = r0 + i * dr, c0 + i * dc
-            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-                vals.append(int(board[r][c]))
-                pos.append((r, c))
-            else:
+            r = r0 + i * dr
+            c = c0 + i * dc
+            if r < 0 or r >= BOARD_SIZE or c < 0 or c >= BOARD_SIZE:
                 valid = False
                 break
+            rs[i] = r
+            cs[i] = c
         if not valid:
             continue
-        if vals.count(BLACK) == 4 and vals.count(EMPTY) == 1:
-            ei = vals.index(EMPTY)
-            er, ec = pos[ei]
+
+        n_black = 0
+        n_empty = 0
+        ei = -1
+        for i in range(5):
+            v = board[rs[i], cs[i]]
+            if v == BLACK:
+                n_black += 1
+            elif v == EMPTY:
+                n_empty += 1
+                ei = i
+
+        if n_black == 4 and n_empty == 1:
+            er = rs[ei]
+            ec = cs[ei]
             b2 = board.copy()
-            b2[er][ec] = BLACK
+            b2[er, ec] = BLACK
             if _line_len(b2, er, ec, dr, dc, BLACK) == 5:
-                black_key = frozenset(pos[i] for i in range(5) if vals[i] == BLACK)
-                if black_key not in seen:
-                    seen.add(black_key)
+                j = 0
+                for i in range(5):
+                    if i != ei:
+                        codes[j] = rs[i] * BOARD_SIZE + cs[i]
+                        j += 1
+                codes.sort()
+                key = ((codes[0] * 225 + codes[1]) * 225 + codes[2]) * 225 + codes[3]
+                is_new = True
+                for k in range(n_seen):
+                    if seen_keys[k] == key:
+                        is_new = False
+                        break
+                if is_new:
+                    seen_keys[n_seen] = key
+                    n_seen += 1
                     count += 1
     return count
+
+
+_NEARBY_RADIUS = 5  # 판정에 실제로 필요한 최대 반경(4)보다 여유를 둔 값
+
+
+def _no_nearby_black(board: np.ndarray, row: int, col: int) -> bool:
+    """(row, col) 주변 (2·radius+1)² 범위에 흑돌이 하나도 없으면 True.
+
+    5목/장목/44/33 판정은 모두 (row,col)을 지나는 4개 축 방향으로
+    최대 4칸 이내의 기존 흑돌에만 의존한다 (그 이상 떨어진 흑돌은
+    어떤 패턴에도 관여할 수 없음 — 이미 5연속이 됐다면 그 전 수에서
+    게임이 끝났을 것이므로 진행 중인 보드에는 축당 흑돌 연속이 4개를
+    못 넘음). 반경 내 흑돌이 없으면 모든 하위 판정 없이 '합법'이 확정된다.
+    """
+    r0, r1 = max(0, row - _NEARBY_RADIUS), min(BOARD_SIZE, row + _NEARBY_RADIUS + 1)
+    c0, c1 = max(0, col - _NEARBY_RADIUS), min(BOARD_SIZE, col + _NEARBY_RADIUS + 1)
+    return not (board[r0:r1, c0:c1] == BLACK).any()
 
 
 def classify_move(
@@ -112,6 +168,9 @@ def classify_move(
     -------
     '5목승리' | '금수-장목' | '금수-44' | '금수-33' | '합법'
     """
+    if _no_nearby_black(board, row, col):
+        return "합법"
+
     b = board.copy()
     b[row][col] = BLACK
 
@@ -151,6 +210,7 @@ def is_forbidden_44(board: np.ndarray, row: int, col: int) -> bool:
     return total >= 2
 
 
+@njit(cache=True)
 def _count_open_threes_in_direction(board: np.ndarray, row: int, col: int,
                                     dr: int, dc: int) -> int:
     """
@@ -160,35 +220,63 @@ def _count_open_threes_in_direction(board: np.ndarray, row: int, col: int,
     열린 3: 6-셀 윈도우 [E][?][?][?][?][E] 에서
     양끝이 EMPTY, 내부 4칸 중 정확히 3칸이 BLACK, 1칸이 EMPTY인 경우.
     같은 흑돌 집합을 공유하는 윈도우는 동일 열린 3.
+
+    numba nopython 모드는 frozenset/set을 지원하지 않아, "같은 흑돌 3개 집합"
+    중복 제거를 (정렬된 좌표 3개 → base-225 정수 키) 인코딩 + 소규모 배열 선형
+    탐색으로 대체. 관찰 가능한 동작(반환값)은 원본과 동일 — 랜덤 9만+건 비교로 검증.
     """
-    seen: set[frozenset] = set()
+    seen_keys = np.zeros(4, dtype=np.int64)
+    n_seen = 0
     count = 0
+    rs = np.empty(6, dtype=np.int64)
+    cs = np.empty(6, dtype=np.int64)
+    codes = np.empty(3, dtype=np.int64)
+
     # (row,col)이 윈도우 내 위치 1,2,3,4 중 하나
     for pos_in_win in range(1, 5):
         r0 = row - pos_in_win * dr
         c0 = col - pos_in_win * dc
-        cells: list[tuple[int, int, int]] = []  # (value, r, c)
         valid = True
         for i in range(6):
-            r, c = r0 + i * dr, c0 + i * dc
-            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
-                cells.append((int(board[r][c]), r, c))
-            else:
+            r = r0 + i * dr
+            c = c0 + i * dc
+            if r < 0 or r >= BOARD_SIZE or c < 0 or c >= BOARD_SIZE:
                 valid = False
                 break
+            rs[i] = r
+            cs[i] = c
         if not valid:
             continue
         # 양끝 빈칸 확인
-        if cells[0][0] != EMPTY or cells[5][0] != EMPTY:
+        if board[rs[0], cs[0]] != EMPTY or board[rs[5], cs[5]] != EMPTY:
             continue
         # 내부 4칸: 흑 3개 + 빈칸 1개
-        interior = cells[1:5]
-        interior_vals = [v for v, _, _ in interior]
-        if interior_vals.count(BLACK) != 3 or interior_vals.count(EMPTY) != 1:
+        n_black = 0
+        n_empty = 0
+        for i in range(1, 5):
+            v = board[rs[i], cs[i]]
+            if v == BLACK:
+                n_black += 1
+            elif v == EMPTY:
+                n_empty += 1
+        if n_black != 3 or n_empty != 1:
             continue
-        black_key = frozenset((r, c) for v, r, c in interior if v == BLACK)
-        if black_key not in seen:
-            seen.add(black_key)
+
+        j = 0
+        for i in range(1, 5):
+            if board[rs[i], cs[i]] == BLACK:
+                codes[j] = rs[i] * BOARD_SIZE + cs[i]
+                j += 1
+        codes.sort()
+        key = (codes[0] * 225 + codes[1]) * 225 + codes[2]
+        is_new = True
+        for k in range(n_seen):
+            if seen_keys[k] == key:
+                is_new = False
+                break
+        if is_new:
+            seen_keys[n_seen] = key
+            n_seen += 1
             count += 1
     return count
 
