@@ -1,0 +1,52 @@
+==========================================================
+본 학습 — AlphaZero 렌주 15×15  [Dirichlet 노이즈 활성]
+  n_sim=200  sp_games=25  n_iter=30
+  net: 5blocks × 128ch  |  resume=False
+  dirichlet: alpha=0.3  epsilon=0.25
+Device : cuda
+  GPU  : NVIDIA GeForce GTX 1650
+  VRAM : 4.3 GB
+CKPT   : C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1
+==========================================================
+  iter    1/30  buf= 11696  p_loss=5.5126  v_loss=1.0662  iter_t=721.5s  total=12.0m
+  iter    2/30  buf= 19648  p_loss=5.4386  v_loss=1.0060  iter_t=207.4s  total=15.5m
+  iter    3/30  buf= 30696  p_loss=5.4415  v_loss=0.9898  iter_t=954.2s  total=31.4m
+  iter    4/30  buf= 42080  p_loss=5.4143  v_loss=0.9929  iter_t=711.3s  total=43.2m
+  iter    5/30  buf= 50000  p_loss=5.4105  v_loss=0.9878  iter_t=834.1s  total=57.1m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0005.pt
+  iter    6/30  buf= 50000  p_loss=5.3950  v_loss=0.9599  iter_t=758.8s  total=69.8m
+  iter    7/30  buf= 50000  p_loss=5.3857  v_loss=0.9303  iter_t=865.3s  total=84.2m
+  iter    8/30  buf= 50000  p_loss=5.3590  v_loss=0.9130  iter_t=567.4s  total=93.7m
+  iter    9/30  buf= 50000  p_loss=5.3499  v_loss=0.9200  iter_t=99.2s  total=95.3m
+  iter   10/30  buf= 50000  win=0.500  p_loss=5.3136  v_loss=0.8583  iter_t=232.4s  total=99.2m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0010.pt
+  iter   11/30  buf= 50000  p_loss=5.2893  v_loss=0.7869  iter_t=184.6s  total=102.3m
+  iter   12/30  buf= 50000  p_loss=5.2418  v_loss=0.7865  iter_t=175.7s  total=105.2m
+  iter   13/30  buf= 50000  p_loss=5.2084  v_loss=0.7710  iter_t=103.6s  total=106.9m
+  iter   14/30  buf= 50000  p_loss=5.1853  v_loss=0.6670  iter_t=101.3s  total=108.6m
+  iter   15/30  buf= 50000  p_loss=5.1308  v_loss=0.6125  iter_t=275.2s  total=113.2m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0015.pt
+  iter   16/30  buf= 50000  p_loss=5.0769  v_loss=0.5467  iter_t=224.7s  total=116.9m
+  iter   17/30  buf= 50000  p_loss=4.9384  v_loss=0.4902  iter_t=289.5s  total=121.8m
+  iter   18/30  buf= 50000  p_loss=4.8211  v_loss=0.4250  iter_t=96.3s  total=123.4m
+  iter   19/30  buf= 50000  p_loss=4.6731  v_loss=0.4211  iter_t=504.5s  total=131.8m
+  iter   20/30  buf= 50000  win=0.500  p_loss=4.4836  v_loss=0.3553  iter_t=499.6s  total=140.1m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0020.pt
+  iter   21/30  buf= 50000  p_loss=4.3697  v_loss=0.2988  iter_t=297.9s  total=145.1m
+  iter   22/30  buf= 50000  p_loss=4.1991  v_loss=0.2313  iter_t=246.6s  total=149.2m
+  iter   23/30  buf= 50000  p_loss=3.9782  v_loss=0.1896  iter_t=310.3s  total=154.4m
+  iter   24/30  buf= 50000  p_loss=3.9319  v_loss=0.1514  iter_t=177.6s  total=157.3m
+  iter   25/30  buf= 50000  p_loss=3.8370  v_loss=0.0922  iter_t=202.0s  total=160.7m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0025.pt
+  iter   26/30  buf= 50000  p_loss=3.7607  v_loss=0.1194  iter_t=330.4s  total=166.2m
+  iter   27/30  buf= 50000  p_loss=3.8003  v_loss=0.1573  iter_t=315.1s  total=171.4m
+  iter   28/30  buf= 50000  p_loss=3.5861  v_loss=0.1267  iter_t=193.0s  total=174.7m
+  iter   29/30  buf= 50000  p_loss=3.6387  v_loss=0.0798  iter_t=280.0s  total=179.3m
+  iter   30/30  buf= 50000  win=0.500  p_loss=3.6868  v_loss=0.0956  iter_t=392.9s  total=185.9m
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_iter0030.pt
+  → 저장: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_15x15_final.pt
+
+학습 완료 — 총 3.10h (186min)
+결과 JSON: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\full_results.json
+승률 곡선: C:\Users\PC\Desktop\Archive\RL omok\checkpoints_banan1\az_renju_winrate.png
+=== 완료 ===

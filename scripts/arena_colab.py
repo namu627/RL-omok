@@ -8,6 +8,8 @@ Colab 셀:
 옵션 (환경변수):
   N_SIM=200            탐색 횟수 (기본값)
   GAMES_PER_COLOR=25   흑/백 각 게임 수 (기본값)
+  CKPT_DIR=<path>      체크포인트 폴더 (기본값: Drive/checkpoints 또는 로컬 checkpoints/)
+  RENJU=1              렌주 규칙(흑 금수) 적용 (기본값 1, 0이면 일반 오목)
 """
 
 import os, sys, time
@@ -23,10 +25,14 @@ from agents.alphazero.mcts import MCTS
 # ── 설정 ──────────────────────────────────────────────────────────────────
 DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
 _DRIVE          = "/content/drive/MyDrive/rl_omok"
-CKPT_DIR        = os.path.join(_DRIVE, "checkpoints") if os.path.isdir("/content/drive") \
-                  else os.path.join(os.path.dirname(__file__), "..", "checkpoints")
+CKPT_DIR        = os.environ.get("CKPT_DIR") or (
+                  os.path.join(_DRIVE, "checkpoints") if os.path.isdir("/content/drive")
+                  else os.path.join(os.path.dirname(__file__), "..", "checkpoints"))
 N_SIM           = int(os.environ.get("N_SIM", 200))
 GAMES_PER_COLOR = int(os.environ.get("GAMES_PER_COLOR", 25))
+# 체크포인트는 renju=True로 학습됨 → 아레나도 동일 규칙(흑 금수 적용)으로 대국.
+# RENJU=0 으로 끄면 일반 오목 규칙. (renju는 15×15·5목에서만 유효)
+RENJU           = os.environ.get("RENJU", "1") not in ("0", "false", "False")
 
 # ── 평가 대상 세대 ─────────────────────────────────────────────────────────
 ITERS = [10, 20, 30]   # 없는 파일은 자동으로 건너뜀
@@ -84,7 +90,8 @@ def arena(label_a: str, ckpt_a: str, label_b: str, ckpt_b: str) -> dict:
     """
     net_a, board_size, n_in_row = _load_net(ckpt_a)
     net_b, _,          _        = _load_net(ckpt_b)
-    env = GomokuEnv(board_size=board_size, n_in_row=n_in_row)
+    use_renju = RENJU and board_size == 15 and n_in_row == 5
+    env = GomokuEnv(board_size=board_size, n_in_row=n_in_row, renju=use_renju)
 
     fn_a = _mcts_fn(net_a, env)
     fn_b = _mcts_fn(net_b, env)
@@ -172,6 +179,7 @@ def print_summary(results: list[dict]) -> None:
 if __name__ == "__main__":
     print("=" * 54)
     print(f"세대 아레나  —  n_sim={N_SIM}, 흑/백 각 {GAMES_PER_COLOR}판")
+    print(f"규칙   : {'렌주(흑 금수 적용)' if RENJU else '일반 오목'}")
     print(f"device : {DEVICE}")
     if DEVICE == "cuda":
         print(f"  GPU  : {torch.cuda.get_device_name(0)}")

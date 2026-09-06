@@ -131,13 +131,22 @@ class MCTS:
         """
         루트 상태에서 n_simulations 회 시뮬레이션 실행 후
         방문 횟수로부터 착수 확률 분포를 반환.
+
+        [불변식] 이 메서드는 self.env의 상태(current_player 등)를 변경하지 않는다.
+        탐색 도중 _legal_actions_for가 env.current_player를 잠깐 건드리므로,
+        진입 시점 값을 저장했다가 finally에서 반드시 복원한다. 호출자(아레나·평가·
+        시각화)는 반환 후 env.current_player가 그대로임을 신뢰할 수 있다.
         """
-        root = self._build_root(board, current_player)
+        saved_player = self.env.current_player
+        try:
+            root = self._build_root(board, current_player)
 
-        for _ in range(self.n_sim):
-            self._simulate(root)
+            for _ in range(self.n_sim):
+                self._simulate(root)
 
-        return self._visit_counts_to_probs(root, temperature)
+            return self._visit_counts_to_probs(root, temperature)
+        finally:
+            self.env.current_player = saved_player
 
     # ── 내부 메서드 ───────────────────────────────────────────────────
 
@@ -149,7 +158,7 @@ class MCTS:
             current_player=current_player,
         )
         policy, _ = self.net.predict(board, current_player, device=self.device)
-        legal = self.env.legal_actions(board)
+        legal = self._legal_actions_for(board, current_player)
         mask = np.zeros_like(policy)
         mask[legal] = 1.0
         policy = policy * mask
@@ -304,12 +313,19 @@ class MCTS:
         return [int(r) * n + int(c) for r, c in np.argwhere(board == 0)]
 
     def _legal_actions_for(self, board: np.ndarray, player: int) -> list[int]:
-        """방안 1: player 시점 합법 수 (흑 금수 제외) 반환. 트리 내부 노드 전용.
+        """방안 1: player 시점 합법 수 (흑 금수 제외) 반환.
 
-        env.legal_actions()가 self.env.current_player를 참조하므로 호출 전 동기화한다.
+        env.legal_actions()가 self.env.current_player를 참조하므로 잠깐 동기화하되,
+        호출 직후 원래 값으로 반드시 복원한다 — MCTS는 self.env 상태를 남기지 않는다.
+        (이 복원이 없으면 탐색 후 env.current_player가 마지막 리프의 색으로 틀어져,
+         같은 env를 공유하는 아레나·평가·시각화의 env.step()이 잘못된 색 돌을 둔다.)
         """
-        self.env.current_player = player
-        return self.env.legal_actions(board)
+        saved = self.env.current_player
+        try:
+            self.env.current_player = player
+            return self.env.legal_actions(board)
+        finally:
+            self.env.current_player = saved
 
     def _apply_action(
         self, board: np.ndarray, action: int, player: int
